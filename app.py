@@ -16,6 +16,10 @@ from pathlib import Path
 from typing import Any
 
 import streamlit as st
+if "logged_in" not in st.session_state:
+
+    st.session_state.logged_in = False
+    
 
 APP_TITLE = "Family Points Card"
 DATA_FILE = Path(__file__).with_name("family_points_data.json")
@@ -37,16 +41,16 @@ class Member:
 
 
 DEFAULT_REWARDS = [
-    Reward("Ice cream", 20),
-    Reward("Extra screen time", 30),
+    Reward("Ice cream", 15),
+    Reward("30min screen time", 30),
     Reward("Toy / small gift", 50),
-    Reward("Movie night", 80),
+    Reward("Movie Night",80)
 ]
 
 DEFAULT_STATE = {
     "pin": DEFAULT_PIN,
     "members": {
-        "Son": {
+        "son": {
             "balance": 100,
             "rewards": [asdict(r) for r in DEFAULT_REWARDS],
             "history": [],
@@ -111,20 +115,87 @@ st.title("💳 Family Points Card")
 st.caption("A simple points wallet for chores, rewards, and parent-managed top-ups.")
 
 state = load_state()
+if not st.session_state.logged_in:
+
+    st.title("🔐 Login")
+
+    username = st.text_input("Username")
+
+    password = st.text_input("Password", type="password")
+
+    if st.button("Login"):
+
+        if username == "parent" and password == "parent123":
+            st.session_state.logged_in = True
+
+            st.session_state.role = "parent"
+
+            st.session_state.unlocked = False
+
+            st.rerun()
+        elif username == "son" and password == "son123":
+            st.session_state.logged_in = True
+
+            st.session_state.role = "child"
+
+            st.session_state.unlocked = False
+
+            st.rerun()
+
+        else:
+
+            st.error("Invalid username or password")
+
+    st.stop()
 
 # Session state
 if "unlocked" not in st.session_state:
+    st.session_state.unlocked = False
+if st.session_state.get("role") == "child":
+
     st.session_state.unlocked = False
 if "selected_member" not in st.session_state:
     st.session_state.selected_member = next(iter(state["members"].keys()))
 if "message" not in st.session_state:
     st.session_state.message = ""
+if "logged_in" not in st.session_state:
+
+    st.session_state.logged_in = False
+
+if "role" not in st.session_state:
+
+    st.session_state.role = None
 
 # Sidebar: parent controls
 with st.sidebar:
-    st.header("Parent controls")
-    entered_pin = st.text_input("PIN", type="password", placeholder="Enter PIN")
+    st.divider()
 
+    if st.button("Logout", use_container_width=True):
+
+        st.session_state.logged_in = False
+  
+        st.session_state.role = None
+        st.session_state.unlocked = False
+
+        st.rerun()
+    if st.session_state.role == "parent":
+
+        st.header("Parent controls")
+
+        entered_pin = st.text_input(
+
+            "PIN",
+
+            type="password",
+
+            placeholder="Enter PIN"
+
+        )
+    else:
+
+        st.header("Child Mode")
+
+        st.info("Parent controls are not available.")
     col_a, col_b = st.columns(2)
     with col_a:
         if st.button("Unlock", use_container_width=True):
@@ -246,7 +317,16 @@ with redeem_col:
         step=1,
         max_value=max(1, member["balance"]),
     )
-    can_redeem = int(redeem_amount) <= member["balance"]
+    can_redeem = (int(redeem_amount) <= member["balance"]and member["balance"] >= 100)
+    if member["balance"] < 100:
+
+        st.warning(
+
+            f"You need at least 100 points before using points. "
+
+            f"Current balance: {member['balance']}"
+
+        )
     if st.button("Use points", use_container_width=True, disabled=not can_redeem):
         member["balance"] -= int(redeem_amount)
         add_history(state, selected_member, f"Redeemed {int(redeem_amount)} points", -int(redeem_amount))
@@ -261,7 +341,19 @@ st.divider()
 reward_col, custom_col = st.columns([1.2, 1])
 
 with reward_col:
+
     st.subheader("Reward menu")
+
+    if member["balance"] < 100:
+
+        st.warning(
+
+            f"You need at least 100 points before redeeming rewards. "
+
+            f"Current balance: {member['balance']}"
+
+        )
+
     rewards = member.get("rewards", [])
     if not rewards:
         st.info("No rewards yet.")
@@ -269,7 +361,7 @@ with reward_col:
         cols = st.columns(2)
         for i, reward in enumerate(rewards):
             with cols[i % 2]:
-                affordable = reward["cost"] <= member["balance"]
+                affordable = (reward["cost"] <= member["balance"]and member["balance"] >= 100)
                 st.markdown(f"**{reward['name']}**  \n{reward['cost']} points")
                 if st.button(
                     f"Redeem {reward['name']}",
@@ -281,19 +373,58 @@ with reward_col:
                     add_history(state, selected_member, f"Redeemed: {reward['name']}", -int(reward["cost"]))
                     save_state(state)
                     st.rerun()
-                st.caption("Available" if affordable else "Not enough points")
+                if member["balance"] < 100:
+                    st.caption("Need at least 100 points before redeeming.")
+
+                elif affordable:
+                    st.caption("Available")
+
+                else:
+                    st.caption("Not enough points")
 
 with custom_col:
     st.subheader("Add custom reward")
     reward_name = st.text_input("Reward name", placeholder="Pizza night")
+
     reward_cost = st.number_input("Cost", min_value=1, value=25, step=1)
-    if st.button("Add reward", use_container_width=True, disabled=not st.session_state.unlocked):
+
+    if st.button("Add reward", use_container_width=True, disabled=st.session_state.role != "parent"):
+ 
         if reward_name.strip():
-            member.setdefault("rewards", []).append({"name": reward_name.strip(), "cost": int(reward_cost)})
+            member.setdefault("rewards", []).append(
+
+            {"name": reward_name.strip(), "cost": int(reward_cost)}
+
+            )
+
             save_state(state)
+
             st.session_state.message = "Reward added."
+
             st.rerun()
+
+    # Reset balance button
+
+    if st.button(
+
+        "Reset Balance to 0",
+
+        use_container_width=True,
+
+        disabled=not st.session_state.unlocked
+
+    ):
+
+        member["balance"] = 0
+
+        save_state(state)
+
+        st.session_state.message = "Balance reset to 0."
+
+        st.rerun()
+
     if not st.session_state.unlocked:
+
         st.caption("Unlock parent mode to add custom rewards.")
 
 st.divider()
