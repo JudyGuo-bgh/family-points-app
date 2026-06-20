@@ -24,6 +24,7 @@ if "logged_in" not in st.session_state:
 APP_TITLE = "Family Points Card"
 DATA_FILE = Path(__file__).with_name("family_points_data.json")
 DEFAULT_PIN = "1234"
+RECOVERY_PIN = "9999"   
 
 
 @dataclass
