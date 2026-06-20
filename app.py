@@ -186,121 +186,110 @@ if "role" not in st.session_state:
 with st.sidebar:
     st.divider()
 
-    if st.button("Logout", use_container_width=True):
-
+    if st.button("Logout", use_container_width=True, key="logout_btn"):
         st.session_state.logged_in = False
-  
         st.session_state.role = None
         st.session_state.unlocked = False
-
         st.rerun()
-    if st.session_state.role == "parent":
 
+    if st.session_state.role == "parent":
         st.header("Parent controls")
 
         entered_pin = st.text_input(
-
             "PIN",
-
             type="password",
-
-            placeholder="Enter PIN"
-
+            placeholder="Enter PIN",
+            key="entered_pin"
         )
-    else:
 
-        st.header("Child Mode")
+        col_a, col_b = st.columns(2)
 
-        st.info("Parent controls are not available.")
-    col_a, col_b = st.columns(2)
-    with col_a:
-        if st.button("Unlock", use_container_width=True):
-            if entered_pin == state.get("pin", DEFAULT_PIN) or entered_pin == RECOVERY_PIN:
-                st.session_state.unlocked = True
-                st.session_state.message = "Parent mode unlocked."
+        with col_a:
+            if st.button("Unlock", use_container_width=True, key="unlock_btn"):
+                if entered_pin == state.get("pin", DEFAULT_PIN) or entered_pin == RECOVERY_PIN:
+                    st.session_state.unlocked = True
+                    st.session_state.message = "Parent mode unlocked."
+                else:
+                    st.session_state.message = "Wrong PIN."
+
+        with col_b:
+            if st.button("Lock", use_container_width=True, key="lock_btn"):
+                st.session_state.unlocked = False
+                st.session_state.message = "Parent mode locked."
+
+        if st.session_state.unlocked:
+            st.success("Unlocked")
+        else:
+            st.info("Locked")
+
+        st.divider()
+        st.subheader("Family members")
+
+        new_member = st.text_input("Add a member", placeholder="Daughter", key="new_member")
+        if st.button("Create member", use_container_width=True, key="create_member_btn"):
+            if new_member.strip():
+                ensure_member(state, new_member.strip())
+                save_state(state)
+                st.session_state.selected_member = new_member.strip()
+                st.session_state.message = f"Created member: {new_member.strip()}"
+                st.rerun()
+
+        st.divider()
+        st.subheader("Delete member")
+        member_to_delete = st.selectbox(
+            "Choose a member to delete",
+            list(state["members"].keys()),
+            key="delete_member_select",
+        )
+        if st.button("Delete member", use_container_width=True, key="delete_member_btn"):
+            if not st.session_state.unlocked:
+                st.session_state.message = "Unlock parent mode first."
+            elif len(state["members"]) <= 1:
+                st.session_state.message = "At least one family member must remain."
             else:
-                st.session_state.message = "Wrong PIN."
-    with col_b:
-        if st.button("Lock", use_container_width=True):
-            st.session_state.unlocked = False
-            st.session_state.message = "Parent mode locked."
+                del state["members"][member_to_delete]
+                save_state(state)
+                remaining = list(state["members"].keys())
+                st.session_state.selected_member = remaining[0]
+                st.session_state.message = f"Deleted {member_to_delete}."
+                st.rerun()
 
-    if st.session_state.unlocked:
-        st.success("Unlocked")
+        st.divider()
+        st.subheader("Password Settings")
+
+        current_pw = st.text_input("Current Password", type="password", key="current_pw")
+        new_pw = st.text_input("New Password", type="password", key="new_pw")
+
+        if st.button("Save Password", key="save_password_btn"):
+            accounts = load_accounts()
+            username = "parent" if st.session_state.role == "parent" else "son"
+
+            if accounts[username] != current_pw:
+                st.session_state.message = "Current password is incorrect."
+            elif len(new_pw.strip()) < 6:
+                st.session_state.message = "Password must be at least 6 characters."
+            else:
+                accounts[username] = new_pw.strip()
+                save_accounts(accounts)
+                st.session_state.message = "Password updated."
+
+        st.divider()
+        st.subheader("PIN settings")
+        new_pin = st.text_input("Set new PIN", type="password", placeholder="New PIN", key="new_pin")
+        if st.button("Save PIN", use_container_width=True, key="save_pin_btn"):
+            if not st.session_state.unlocked:
+                st.session_state.message = "Unlock first to change PIN."
+            elif len(new_pin.strip()) < 4:
+                st.session_state.message = "PIN should be at least 4 digits."
+            else:
+                state["pin"] = new_pin.strip()
+                save_state(state)
+                st.session_state.message = "PIN updated."
+
     else:
-        st.info("Locked")
-
-    st.divider()
-    st.subheader("Family members")
-
-    new_member = st.text_input("Add a member", placeholder="Daughter")
-    if st.button("Create member", use_container_width=True):
-        if new_member.strip():
-            ensure_member(state, new_member.strip())
-            save_state(state)
-            st.session_state.selected_member = new_member.strip()
-            st.session_state.message = f"Created member: {new_member.strip()}"
-            st.rerun()
-
-    st.divider()
-    st.subheader("Delete member")
-    member_to_delete = st.selectbox(
-        "Choose a member to delete",
-        list(state["members"].keys()),
-        key="delete_member_select",
-    )
-    if st.button("Delete member", use_container_width=True):
-        if not st.session_state.unlocked:
-            st.session_state.message = "Unlock parent mode first."
-        elif len(state["members"]) <= 1:
-            st.session_state.message = "At least one family member must remain."
-        else:
-            del state["members"][member_to_delete]
-            save_state(state)
-            remaining = list(state["members"].keys())
-            st.session_state.selected_member = remaining[0]
-            st.session_state.message = f"Deleted {member_to_delete}."
-            st.rerun()
-
-    st.divider()
-    st.subheader("Password Settings")
-
-    current_pw = st.text_input("Current Password", type="password")
-
-    new_pw = st.text_input("New Password", type="password")
-
-    if st.button("Save Password"):
-
-        accounts = load_accounts()
-
-        username = "parent" if st.session_state.role == "parent" else "son"
-
-        if accounts[username] != current_pw:
-
-            st.session_state.message = "Current password is incorrect."
-
-        elif len(new_pw.strip()) < 6:
-
-            st.session_state.message = "Password must be at least 6 characters."
-
-        else:
-
-            accounts[username] = new_pw.strip()
-
-            save_accounts(accounts)
-
-            st.session_state.message = "Password updated."
-    st.subheader("PIN settings")
-    new_pin = st.text_input("Set new PIN", type="password", placeholder="New PIN")
-    if st.button("Save PIN", use_container_width=True):
-        if not st.session_state.unlocked:
-            st.session_state.message = "Unlock first to change PIN."
-        elif len(new_pin.strip()) < 4:
-            st.session_state.message = "PIN should be at least 4 digits."
-        else:
-            state["pin"] = new_pin.strip()
-            save_state(state)
-            st.session_state.message = "PIN updated."
+        st.header("Child Mode")
+        st.info("Parent controls are not available.")
+        st.session_state.unlocked = False
 
 # Main layout
 member_names = list(state["members"].keys())
