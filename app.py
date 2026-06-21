@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime,timedelta
 from pathlib import Path
 from typing import Any
 
@@ -143,76 +143,84 @@ def add_history(state: dict[str, Any], member_name: str, label: str, amount: int
             "amount": amount,
         },
     )
-def process_auto_pay(state):
-
-    today = datetime.now().strftime("%Y-%m-%d")
-
+def process_auto_pay(state, only_member: str | None = None):
+    today = datetime.now().date()
     changed = False
 
-    for member_name, member in state["members"].items():
+    if only_member is None:
+        members_iter = state["members"].items()
+    else:
+        if only_member not in state["members"]:
+            return False
+        members_iter = [(only_member, state["members"][only_member])]
 
-        auto_pay = member.get("auto_pay", {})
+    for member_name, member in members_iter:
+        auto_pay = member.setdefault("auto_pay", {
+            "active": False,
+            "owe": 0,
+            "daily_pay": 20,
+            "last_paid_date": "",
+        })
 
         if not auto_pay.get("active", False):
-
             continue
+
+        owe = int(auto_pay.get("owe", 0))
+        if owe <= 0:
+            auto_pay["active"] = False
+            continue
+
+        daily_pay = int(auto_pay.get("daily_pay", 20))
+        last_paid_str = auto_pay.get("last_paid_date", "")
+
+        if last_paid_str:
+            try:
+                last_paid_date = datetime.strptime(last_paid_str, "%Y-%m-%d").date()
+            except ValueError:
+                last_paid_date = today - timedelta(days=1)
+        else:
+            last_paid_date = today - timedelta(days=1)
+
+        days_due = (today - last_paid_date).days
+        if days_due <= 0:
+            continue
+
+        payments_to_make = min(days_due, (owe + daily_pay - 1) // daily_pay)
+
+        for _ in range(payments_to_make):
+            owe = int(auto_pay.get("owe", 0))
+            if owe <= 0:
+                auto_pay["active"] = False
+                break
+
+            pay_amount = min(daily_pay, owe)
+
+            if member["balance"] >= pay_amount:
+                member["balance"] -= pay_amount
+                auto_pay["owe"] = owe - pay_amount
+                auto_pay["last_paid_date"] = today.strftime("%Y-%m-%d")
+                add_history(
+                    state,
+                    member_name,
+                    f"Auto paid {pay_amount} points",
+                    -pay_amount
+                )
+                changed = True
+            else:
+                auto_pay["last_paid_date"] = today.strftime("%Y-%m-%d")
+                add_history(
+                    state,
+                    member_name,
+                    "Auto pay skipped (not enough points)",
+                    0
+                )
+                changed = True
+                break
 
         if auto_pay.get("owe", 0) <= 0:
-
             auto_pay["active"] = False
 
-            continue
-
-        if auto_pay.get("last_paid_date") == today:
-
-            continue
-
-        daily_pay = auto_pay.get("daily_pay", 20)
-
-        pay_amount = min(daily_pay, auto_pay["owe"])
-
-        if member["balance"] >= pay_amount:
-
-            member["balance"] -= pay_amount
-
-            auto_pay["owe"] -= pay_amount
-
-            auto_pay["last_paid_date"] = today
-
-            add_history(
-
-                state,
-
-                member_name,
-
-                f"Auto paid {pay_amount} points",
-
-                -pay_amount
-
-            )
-
-            changed = True
-
-        else:
-
-            auto_pay["last_paid_date"] = today
-
-            add_history(
-
-                state,
-
-                member_name,
-
-                "Auto pay skipped (not enough points)",
-
-                0
-
-            )
-
-            changed = True
-
     return changed
-
 
 def safe_member_index(member_names: list[str], selected: str) -> int:
     if selected in member_names:
@@ -405,38 +413,84 @@ with st.sidebar:
         st.divider()
         st.subheader("Owe Points")
 
-        owe_amount = st.number_input(
+        owe_amount = st.number_input( "Points Owed",
+                                      min_value=0,
+                                      value=int(member.get("auto_pay", {}).get("owe", 0)),
+                                      step=1,
+                                      key="owe_amount"
+                                      )
 
-            "Points Owed",
+        daily_pay = st.selectbox(
+            "Daily Payment",
+            [10,20, 30,40,50,60],
+            key="daily_payment")
 
-            min_value=0,
+        if st.button("💸 Run Autopay Now", use_container_width=True):
+            if process_auto_pay(state, selected_member):
+                save_state(state)
+                st.session_state.message = "Autopay processed."
+                st.rerun()
 
-            value=int(member.get("auto_pay", {}).get("owe", 0)),
+            else:
+                st.session_state.message = "No autopay was needed."
+
+        manual_pay_amount = st.number_input(
+            "Manual Pay Amount",
+            min_value=1,
+
+            value=20,
 
             step=1,
 
-            key="owe_amount")
-        daily_pay = st.selectbox(
+            key="manual_pay_amount"
+            )
+        if st.button("💰 Manual Pay", use_container_width=True):
 
-           "Daily Payment",
+            member.setdefault("auto_pay", {})
 
-           [20, 30],
+            current_owe = int(member["auto_pay"].get("owe", 0))
 
-           key="daily_payment")
+            pay_amount = min(int(manual_pay_amount), current_owe)
+            if pay_amount <= 0:
+                st.session_state.message = "Nothing to pay."
+            elif member["balance"] < pay_amount:
+                st.session_state.message = "Not enough balance for manual pay."
+            else:
+                member["balance"] -= pay_amount
+                member["auto_pay"]["owe"] = current_owe - pay_amount
+                if member["auto_pay"]["owe"] <= 0:
+                    member["auto_pay"]["active"] = False
+                add_history(state,
+                            selected_member,
+                            f"Manual paid {pay_amount} points",
+                            -pay_amount)
+
+                save_state(state)
+
+                st.session_state.message = f"Manually paid {pay_amount} points."
+
+                st.rerun()
+
         if st.button("Save Owe Plan", key="save_owe_plan"):
             member.setdefault("auto_pay", {})
 
             member["auto_pay"]["active"] = owe_amount > 0
 
             member["auto_pay"]["owe"] = int(owe_amount)
-
+    
             member["auto_pay"]["daily_pay"] = int(daily_pay)
-
+   
             member["auto_pay"]["last_paid_date"] = ""
 
             save_state(state)
 
             st.session_state.message = "Owe plan saved."
+        
+
+
+
+
+
         st.subheader("PIN settings")
         new_pin = st.text_input("Set new PIN", type="password", placeholder="New PIN", key="new_pin")
         if st.button("Save PIN", use_container_width=True, key="save_pin_btn"):
