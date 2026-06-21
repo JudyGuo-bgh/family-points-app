@@ -77,6 +77,15 @@ DEFAULT_STATE = {
             "balance": 100,
             "rewards": [asdict(r) for r in DEFAULT_REWARDS],
             "history": [],
+            "auto_pay": {
+
+                  "active": False,
+
+                  "owe": 0,
+
+                  "daily_pay": 20,
+
+                 "last_paid_date": "",},
         }
     },
 }
@@ -113,6 +122,15 @@ def ensure_member(state: dict[str, Any], member_name: str) -> None:
             "balance": 0,
             "rewards": [asdict(r) for r in DEFAULT_REWARDS],
             "history": [],
+            "auto_pay": {
+
+                   "active": False,
+
+                   "owe": 0,
+
+                  "daily_pay": 20,
+
+                 "last_paid_date": "",},
         }
 
 
@@ -125,6 +143,75 @@ def add_history(state: dict[str, Any], member_name: str, label: str, amount: int
             "amount": amount,
         },
     )
+def process_auto_pay(state):
+
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    changed = False
+
+    for member_name, member in state["members"].items():
+
+        auto_pay = member.get("auto_pay", {})
+
+        if not auto_pay.get("active", False):
+
+            continue
+
+        if auto_pay.get("owe", 0) <= 0:
+
+            auto_pay["active"] = False
+
+            continue
+
+        if auto_pay.get("last_paid_date") == today:
+
+            continue
+
+        daily_pay = auto_pay.get("daily_pay", 20)
+
+        pay_amount = min(daily_pay, auto_pay["owe"])
+
+        if member["balance"] >= pay_amount:
+
+            member["balance"] -= pay_amount
+
+            auto_pay["owe"] -= pay_amount
+
+            auto_pay["last_paid_date"] = today
+
+            add_history(
+
+                state,
+
+                member_name,
+
+                f"Auto paid {pay_amount} points",
+
+                -pay_amount
+
+            )
+
+            changed = True
+
+        else:
+
+            auto_pay["last_paid_date"] = today
+
+            add_history(
+
+                state,
+
+                member_name,
+
+                "Auto pay skipped (not enough points)",
+
+                0
+
+            )
+
+            changed = True
+
+    return changed
 
 
 def safe_member_index(member_names: list[str], selected: str) -> int:
@@ -138,6 +225,9 @@ st.title("💳 Family Points Card")
 st.caption("A simple points wallet for chores, rewards, and parent-managed top-ups.")
 
 state = load_state()
+if process_auto_pay(state):
+
+    save_state(state)
 if not st.session_state.logged_in:
 
     st.title("🔐 Login")
@@ -181,6 +271,45 @@ if "logged_in" not in st.session_state:
 if "role" not in st.session_state:
 
     st.session_state.role = None
+member_names = list(state["members"].keys())
+
+if not member_names:
+
+    state["members"]["Son"] = {
+
+        "balance": 0,
+
+        "rewards": [asdict(r) for r in DEFAULT_REWARDS],
+
+        "history": [],
+
+        "auto_pay": {
+
+            "active": False,
+
+            "owe": 0,
+
+            "daily_pay": 20,
+
+            "last_paid_date": "",
+
+        },
+
+    }
+
+    save_state(state)
+
+    member_names = ["Son"]
+
+if "selected_member" not in st.session_state:
+
+    st.session_state.selected_member = member_names[0]
+
+selected_member = st.session_state.selected_member
+
+ensure_member(state, selected_member)
+
+member = state["members"][selected_member]
 
 # Sidebar: parent controls
 with st.sidebar:
@@ -274,6 +403,40 @@ with st.sidebar:
                 st.session_state.message = "Password updated."
 
         st.divider()
+        st.subheader("Owe Points")
+
+        owe_amount = st.number_input(
+
+            "Points Owed",
+
+            min_value=0,
+
+            value=int(member.get("auto_pay", {}).get("owe", 0)),
+
+            step=1,
+
+            key="owe_amount")
+        daily_pay = st.selectbox(
+
+           "Daily Payment",
+
+           [20, 30],
+
+           key="daily_payment")
+        if st.button("Save Owe Plan", key="save_owe_plan"):
+            member.setdefault("auto_pay", {})
+
+            member["auto_pay"]["active"] = owe_amount > 0
+
+            member["auto_pay"]["owe"] = int(owe_amount)
+
+            member["auto_pay"]["daily_pay"] = int(daily_pay)
+
+            member["auto_pay"]["last_paid_date"] = ""
+
+            save_state(state)
+
+            st.session_state.message = "Owe plan saved."
         st.subheader("PIN settings")
         new_pin = st.text_input("Set new PIN", type="password", placeholder="New PIN", key="new_pin")
         if st.button("Save PIN", use_container_width=True, key="save_pin_btn"):
@@ -366,6 +529,23 @@ with redeem_col:
         st.rerun()
     if member["balance"] == 0:
         st.caption("No points available.")
+    auto_pay = member.get("auto_pay", {})
+
+    st.subheader("Owe Status")
+
+    st.write(f"Remaining Owe: {auto_pay.get('owe', 0)} points")
+
+    if auto_pay.get("active"):
+
+        st.write(
+
+            f"Daily Payment: {auto_pay.get('daily_pay', 20)} points"
+
+        )
+
+    else:
+
+        st.write("No active owe plan")
 
 st.divider()
 
