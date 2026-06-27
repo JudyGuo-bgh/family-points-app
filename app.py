@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime,timedelta
 from pathlib import Path
 from typing import Any
+import os
 
 import streamlit as st
 AUTH_FILE = Path(__file__).with_name("accounts.json")
@@ -104,17 +105,30 @@ def load_state() -> dict[str, Any]:
         with DATA_FILE.open("r", encoding="utf-8") as f:
             data = json.load(f)
         if "members" not in data:
-            raise ValueError("Invalid state file")
+            st.error("Data file is invalid.")
+
+            st.stop()
+
         return data
-    except Exception:
+    except json.JSONDecodeError:
+        st.error("Data file is corrupted.")
+        st.stop()
+
+    except FileNotFoundError:
         save_state(DEFAULT_STATE)
+
         return json.loads(json.dumps(DEFAULT_STATE))
 
 
 def save_state(state: dict[str, Any]) -> None:
-    with DATA_FILE.open("w", encoding="utf-8") as f:
+
+    tmp_file = DATA_FILE.with_suffix(".tmp")
+
+    with tmp_file.open("w", encoding="utf-8") as f:
+
         json.dump(state, f, indent=2)
 
+    os.replace(tmp_file, DATA_FILE)
 
 def ensure_member(state: dict[str, Any], member_name: str) -> None:
     if member_name not in state["members"]:
